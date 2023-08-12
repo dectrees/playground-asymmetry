@@ -1,4 +1,4 @@
-import { Vector3, Color3, Engine, Scene, ArcRotateCamera, HemisphericLight, CreateGround, MeshBuilder, StandardMaterial, PointerEventTypes, Mesh, Nullable, Scalar, Quaternion, ShadowGenerator, DirectionalLight, ActionManager, ExecuteCodeAction, Ray, RayHelper, Axis } from "@babylonjs/core";
+import { Vector3, Color3, Engine, Scene, ArcRotateCamera, HemisphericLight, CreateGround, MeshBuilder, StandardMaterial, PointerEventTypes, Mesh, Nullable, Scalar, Quaternion, ShadowGenerator, DirectionalLight, ActionManager, ExecuteCodeAction, Ray, RayHelper, Axis, AssetsManager, ParticleSystem, Texture, SphereParticleEmitter } from "@babylonjs/core";
 import './index.css';
 
 export default class Game {
@@ -28,6 +28,18 @@ export default class Game {
     dxn = 0; //which dxn dash should go
     dashing = false;
 
+    //particle system
+    ps:Nullable<ParticleSystem>;
+    fireball:Mesh;
+    bullet:Mesh = null;
+    fireReady:boolean = false;
+    fireStatus = false;
+    fireRanger = 20;
+    fireVelocity = 0.1;
+    fireDirection:Vector3 =Vector3.Zero();
+    distance = 0;
+    fireStart:Vector3 = Vector3.Zero();
+
     constructor() {
         this.canvas = document.createElement("canvas");
         this.canvas.style.width = '100%';
@@ -44,6 +56,7 @@ export default class Game {
                 this.scene.render();
             }
         );
+        
         this.registerPointerHandler();
         this.scene.onBeforeRenderObservable.add(() => {
             this._updateFrame();
@@ -51,7 +64,40 @@ export default class Game {
         });
         this.registerAction(this.scene);
         this.registerUpdate(this.scene);
-        this.test(this.scene);
+
+        this.gameObjects(this.scene);
+        this._loadParticleSystem(this.scene);
+    }
+
+    private  _loadParticleSystem(scene:Scene)
+    {
+        var myParticleSystem = null;
+        const assetsManager = new AssetsManager(scene);
+        // const particleTexture = assetsManager.addTextureTask("my particle texture", "https://models.babylonjs.com/Demos/particles/textures/dotParticle.png")
+        const particleFile = assetsManager.addTextFileTask("my particle system", "/particleSystem.json");
+        
+        // load all tasks
+        assetsManager.load();
+    
+        // after all tasks done, set up particle system
+        assetsManager.onFinish = (tasks) => {
+            // console.log("tasks successful", tasks);
+    
+            // prepare to parse particle system files
+            const particleJSON = JSON.parse(particleFile.text);
+            myParticleSystem = ParticleSystem.Parse(particleJSON, scene, "");
+    
+            // set particle texture
+            // myParticleSystem.particleTexture = particleTexture.texture;
+    
+            // set emitter
+            // myParticleSystem.emitter = sphere;
+            myParticleSystem.emitter = this.fireball;
+            // myParticleSystem.particleEmitterType = new SphereParticleEmitter();
+            this.ps = myParticleSystem;
+            this.fireReady = true;
+        }
+
     }
 
     private _checkInput(scene:Scene)
@@ -99,6 +145,23 @@ export default class Game {
                 } else {
                     this.dxn = 0;
                 }
+                if(this.inputMap["f"])
+                {
+                    if(this.bullet)
+                    {
+                        if(!this.fireStatus)
+                        {
+                            this.fireStatus = true;
+                            this.fireDirection.copyFrom(this.player.right);
+                            // this.fireDirection = this.player.right;
+                            // console.log("fire directon:",this.fireDirection);
+                            this.distance = 0;
+                            this.bullet.setParent(null);
+                            this.fireStart.copyFrom(this.bullet.position);
+                            // console.log("fireStart:",this.fireStart);
+                        }
+                    }
+                }
             } else {
                 if(this.dashTime <= 0){
                     this.dxn = 0;
@@ -116,13 +179,11 @@ export default class Game {
                         this.dashvelh = this.player.forward;
                         this.dashvelh.y += 0;
                         this.player.moveWithCollisions(this.dashvelh.scaleInPlace(0.5));
-                        console.log("dash left");
                         
                     } else if(this.dxn == 4){ //right
                         this.dashvelh = this.player.forward;
                         this.dashvelh.y = 0;
                         this.player.moveWithCollisions(this.dashvelh.scaleInPlace(-0.5));
-                        console.log("dash right");
                     }
                 }
             }
@@ -135,7 +196,7 @@ export default class Game {
         
             //jump check
             const delta = scene.getEngine().getDeltaTime();
-            // console.log("rotate:",this.player?.rotation.y);
+     
             if(this.velocity.y<=0){//create a ray to detect the ground as character is falling
                 
                 const ray = new Ray();
@@ -157,7 +218,7 @@ export default class Game {
             };
             if (this.jumpKeyDown && this.onObject) {
  
-                this.velocity.y = 0.25;
+                this.velocity.y = 0.20 ;
                 this.onObject = false;
             }
         
@@ -187,14 +248,14 @@ export default class Game {
         }));
     
     }
-    private test(scene:Scene)
+    private gameObjects(scene:Scene)
     {
         this.player = this.asymmetryWithAxis(scene);
         if(this.player) 
         {
             this.player.isPickable = false;
             this.player.ellipsoid = new Vector3(0.5,0.5,0.5);
-            // this.player.setDirection(Axis.X);
+            this.player.position.x = -4;
         }
         this.camera.lockedTarget = this.player;
 
@@ -207,6 +268,14 @@ export default class Game {
         platmtl.diffuseColor = new Color3(.5,.5,.8);
         platform1.material = platmtl;
         platform1.checkCollisions = true;
+
+        this.fireball = MeshBuilder.CreateSphere("ball platform",{diameter:0.5},scene);
+        this.fireball.material = platmtl;
+        this.fireball.position.x = 4;
+        this.fireball.position.y = 3;
+        this.fireball.isVisible  = true;
+        // if(this.ps) this.ps.emitter = ball;
+
         //shadows setting
         platform1.receiveShadows = true;
         this.shadowGenerator.getShadowMap()?.renderList?.push(platform1);
@@ -214,7 +283,6 @@ export default class Game {
     }
     private _updateFrame()
     {
-        // if(this.player) this.player.rotation.y = Scalar.Lerp(this.player.rotation.y, this.targetY,0.2);
         if(this.player)
         {
             if(this.isPointerDown)
@@ -224,17 +292,62 @@ export default class Game {
                 if(this.source) 
                 {
                     this.player.rotationQuaternion = Quaternion.Slerp(this.source,this.target,0.3);
-                    // console.log("rotationQuaternion:",this.player.rotationQuaternion);
                 }
                 else 
                 {
                     console.log("souce is null");
                 }
             }
+            if(this.ps)
+            {
+                // this.ps.emitter = new Vector3(this.player.position.x, this.player.position.y+0.5,this.player.position.z);
+            }
+
+            if(!this.bullet)
+            {
+                if(this.fireReady)
+                {
+                    console.log("clone a new fireball");
+                    this.bullet = this.fireball.clone();
+                    if(this.player)
+                    {
+                        this.bullet.position = Vector3.Zero();
+                        this.bullet.position.y = 0.7;
+                        this.bullet.isVisible = true;
+                        this.bullet.parent = this.player;
+                    }
+                }
+            }
+            else if(this.fireStatus){
+                if(this.distance < this.fireRanger)
+                {
+                    // console.log("distance:",this.distance);
+                    let step = this.fireDirection;
+                    step.y = 0;
+                    // console.log("before norm:",step.length());
+                    step = step.normalize();
+                    // console.log("after norm:",step.length());
+                    this.bullet.moveWithCollisions(step.scaleInPlace(this.fireVelocity));
+                    // console.log("bullet pos:",this.bullet.position);
+                    // console.log("start pos:",this.fireStart);
+                    this.distance = this.bullet.position.subtract(this.fireStart).length();
+                }
+                else{
+                    console.log("reset fire bullet");
+                    this.bullet.position = Vector3.Zero();
+                    this.bullet.position.y = 0.7;
+                    this.bullet.parent = this.player;
+                    this.distance = 0;
+                    this.fireStatus = false;
+                }
+    
+            }
         }
         else{
             console.log("player is null");
         }
+
+
     }
     private createCamera(scene: Scene) {
         var camera = new ArcRotateCamera("camera", -Math.PI/2, Math.PI / 2.5, 15, Vector3.Zero(), scene);
@@ -276,7 +389,7 @@ export default class Game {
         const light = new HemisphericLight("light", new Vector3(0.5, 1, 0), scene);
         light.intensity = 0.7;
         scene.ambientColor = new Color3(0.3, 0.3, 0.3);
-            // This creates a light, aiming 0,1,0 - to the sky (non-mesh)
+        // This creates a light, aiming 0,1,0 - to the sky (non-mesh)
 
         var light0 = new DirectionalLight("light", new Vector3(0,-1,0),scene);
         light0.position = new Vector3(20, 40, 20);
@@ -287,7 +400,13 @@ export default class Game {
 
         //ground
         var ground = CreateGround("ground", { width: 50, height: 50 });
-        ground.receiveShadows = true;   
+        ground.receiveShadows = true;  
+        var groundMaterial = new StandardMaterial("groundMaterial", scene);
+        groundMaterial.diffuseTexture = new Texture("https://assets.babylonjs.com/textures/wood.jpg", scene);
+        groundMaterial.diffuseTexture.uScale = 30;
+        groundMaterial.diffuseTexture.vScale = 30;
+        groundMaterial.specularColor = new Color3(.1, .1, .1);
+        ground.material = groundMaterial;
 
         //gravity
         scene.gravity = new Vector3(0, -0.9, 0);
