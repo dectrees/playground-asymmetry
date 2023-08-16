@@ -1,4 +1,4 @@
-import { Vector3, Color3, Engine, Scene, ArcRotateCamera, HemisphericLight, CreateGround, MeshBuilder, StandardMaterial, PointerEventTypes, Mesh, Nullable, Scalar, Quaternion, ShadowGenerator, DirectionalLight, ActionManager, ExecuteCodeAction, Ray, RayHelper, Axis, AssetsManager, ParticleSystem, Texture, SphereParticleEmitter } from "@babylonjs/core";
+import { Vector3, Color3, Engine, Scene, ArcRotateCamera, HemisphericLight, CreateGround, MeshBuilder, StandardMaterial, PointerEventTypes, Mesh, Nullable, Scalar, Quaternion, ShadowGenerator, DirectionalLight, ActionManager, ExecuteCodeAction, Ray, RayHelper, Axis, AssetsManager, ParticleSystem, Texture, SphereParticleEmitter, Matrix } from "@babylonjs/core";
 import './index.css';
 
 export default class Game {
@@ -39,6 +39,8 @@ export default class Game {
     fireDirection:Vector3 =Vector3.Zero();
     distance = 0;
     fireStart:Vector3 = Vector3.Zero();
+    trace:boolean = true;
+    lightup:boolean = false;
 
     constructor() {
         this.canvas = document.createElement("canvas");
@@ -158,6 +160,7 @@ export default class Game {
                             this.distance = 0;
                             this.bullet.setParent(null);
                             this.fireStart.copyFrom(this.bullet.position);
+                            this.bullet.rotate(Vector3.Up(),Math.PI/2);
                             // console.log("fireStart:",this.fireStart);
                         }
                     }
@@ -274,7 +277,7 @@ export default class Game {
         this.fireball.position.x = 4;
         this.fireball.position.y = 3;
         this.fireball.isVisible  = true;
-        // if(this.ps) this.ps.emitter = ball;
+        this.fireball.checkCollisions = false;
 
         //shadows setting
         platform1.receiveShadows = true;
@@ -307,7 +310,7 @@ export default class Game {
             {
                 if(this.fireReady)
                 {
-                    console.log("clone a new fireball");
+                    // console.log("clone a new fireball");
                     this.bullet = this.fireball.clone();
                     if(this.player)
                     {
@@ -315,27 +318,70 @@ export default class Game {
                         this.bullet.position.y = 0.7;
                         this.bullet.isVisible = true;
                         this.bullet.parent = this.player;
+                        this.ps?.stop();
                     }
                 }
             }
             else if(this.fireStatus){
-                if(this.distance < this.fireRanger)
+                let intersect = this.bullet.intersectsMesh(this.fireball);
+                if((this.distance < this.fireRanger)&&(!intersect))
                 {
                     // console.log("distance:",this.distance);
-                    let step = this.fireDirection;
-                    step.y = 0;
-                    // console.log("before norm:",step.length());
-                    step = step.normalize();
-                    // console.log("after norm:",step.length());
-                    this.bullet.moveWithCollisions(step.scaleInPlace(this.fireVelocity));
-                    // console.log("bullet pos:",this.bullet.position);
-                    // console.log("start pos:",this.fireStart);
-                    this.distance = this.bullet.position.subtract(this.fireStart).length();
+                    if(this.trace)
+                    {
+                        const smatrix = Matrix.Zero();
+                        const sscaling = Vector3.Zero();
+                        const srotationQuaternion = Quaternion.Zero();
+                        const stranslation = Vector3.Zero();
+
+                        let step = Vector3.Zero();
+                        step.copyFrom(this.bullet.forward);
+                        // step.y = 0;
+                        step = step.normalize();
+                        Matrix.LookAtLHToRef(Vector3.Zero(), step, Axis.Y, smatrix);
+                        smatrix.decompose(sscaling, srotationQuaternion, stranslation);
+                        this.bullet.rotationQuaternion = srotationQuaternion.invertInPlace();
+                        this.bullet.moveWithCollisions(step.scaleInPlace(this.fireVelocity));
+
+
+                        const matrix = Matrix.Zero();
+                        const scaling = Vector3.Zero();
+                        const rotationQuaternion = Quaternion.Zero();
+                        const translation = Vector3.Zero();
+                        
+                        Matrix.LookAtLHToRef(this.bullet.position, this.fireball.position, Axis.Y, matrix);                      
+                        matrix.decompose(scaling, rotationQuaternion, translation);
+                        let destQuaternion = rotationQuaternion.invertInPlace();
+                        this.bullet.rotationQuaternion = Quaternion.Slerp(this.bullet.rotationQuaternion,destQuaternion,0.05); 
+
+                        this.distance = this.bullet.position.subtract(this.fireStart).length();
+                    }
+                    else{
+                        let step = this.fireDirection;
+                        step.y = 0;
+                        step = step.normalize();
+                        this.bullet.moveWithCollisions(step.scaleInPlace(this.fireVelocity));
+                        this.distance = this.bullet.position.subtract(this.fireStart).length();
+                    }
                 }
                 else{
-                    console.log("reset fire bullet");
+                    // console.log("reset fire bullet");
+                    if(intersect)
+                    {
+                        if(!this.lightup) 
+                        {
+                            this.lightup = true;
+                            this.ps?.start();
+                            setTimeout(()=>{
+                                this.ps?.stop();
+                                this.lightup = false;
+                            },3000);
+                        }
+
+                    }
                     this.bullet.position = Vector3.Zero();
                     this.bullet.position.y = 0.7;
+                    this.bullet.rotationQuaternion =  Quaternion.FromEulerAngles(0,0,0);
                     this.bullet.parent = this.player;
                     this.distance = 0;
                     this.fireStatus = false;
@@ -353,6 +399,8 @@ export default class Game {
         var camera = new ArcRotateCamera("camera", -Math.PI/2, Math.PI / 2.5, 15, Vector3.Zero(), scene);
         camera.lowerRadiusLimit = 9;
         camera.upperRadiusLimit = 50;
+        camera.upperBetaLimit = Math.PI/2;
+        camera.lowerBetaLimit = Math.PI/4;
         camera.attachControl(scene.getEngine().getRenderingCanvas(),true);
         camera._panningMouseButton = 1;
         return camera;
