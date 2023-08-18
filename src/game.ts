@@ -1,4 +1,32 @@
-import { Animation, Vector3, Color3, Engine, Scene, ArcRotateCamera, HemisphericLight, CreateGround, MeshBuilder, StandardMaterial, PointerEventTypes, Mesh, Nullable, Scalar, Quaternion, ShadowGenerator, DirectionalLight, ActionManager, ExecuteCodeAction, Ray, RayHelper, Axis, AssetsManager, ParticleSystem, Texture, SphereParticleEmitter, Matrix, SolidParticleSystem, SolidParticle } from "@babylonjs/core";
+import { Animation, 
+    Vector3,
+    Color3, 
+    Engine, 
+    Scene, 
+    ArcRotateCamera,
+    HemisphericLight,
+    CreateGround, 
+    MeshBuilder, 
+    StandardMaterial, 
+    PointerEventTypes, 
+    Mesh, 
+    Nullable,
+    Scalar,
+    Quaternion, 
+    ShadowGenerator, 
+    DirectionalLight,
+    ActionManager,
+    ExecuteCodeAction,
+    Ray, 
+    RayHelper,
+    Axis,
+    AssetsManager,
+    ParticleSystem,
+    Texture,
+    SphereParticleEmitter,
+    Matrix,
+    SolidParticleSystem,
+    SolidParticle } from "@babylonjs/core";
 import './index.css';
 
 export default class Game {
@@ -442,10 +470,14 @@ export default class Game {
                 }
             }
             else if (this.fireStatus) {
-                let intersect = this.bullet.intersectsMesh(this.bandit);
+                let intersect = false;
+                if(this.bandit)
+                {
+                    intersect = this.bullet.intersectsMesh(this.bandit);
+                }
                 if ((this.distance < this.fireRanger) && (!intersect)) {
                     // console.log("distance:",this.distance);
-                    if (this.trace) {
+                    if (this.trace && this.bandit) {
                         const smatrix = Matrix.Zero();
                         const sscaling = Vector3.Zero();
                         const srotationQuaternion = Quaternion.Zero();
