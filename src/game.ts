@@ -1,4 +1,4 @@
-import { Vector3, Color3, Engine, Scene, ArcRotateCamera, HemisphericLight, CreateGround, MeshBuilder, StandardMaterial, PointerEventTypes, Mesh, Nullable, Scalar, Quaternion, ShadowGenerator, DirectionalLight, ActionManager, ExecuteCodeAction, Ray, RayHelper, Axis, AssetsManager, ParticleSystem, Texture, SphereParticleEmitter, Matrix } from "@babylonjs/core";
+import { Animation, Vector3, Color3, Engine, Scene, ArcRotateCamera, HemisphericLight, CreateGround, MeshBuilder, StandardMaterial, PointerEventTypes, Mesh, Nullable, Scalar, Quaternion, ShadowGenerator, DirectionalLight, ActionManager, ExecuteCodeAction, Ray, RayHelper, Axis, AssetsManager, ParticleSystem, Texture, SphereParticleEmitter, Matrix, SolidParticleSystem, SolidParticle } from "@babylonjs/core";
 import './index.css';
 
 export default class Game {
@@ -7,9 +7,9 @@ export default class Game {
     camera;
     canvas: HTMLCanvasElement;
     player: Nullable<Mesh> = null;
-    source = Quaternion.FromEulerAngles(0,0,0);
-    target = Quaternion.FromEulerAngles(0,0,0);
-    shadowGenerator:ShadowGenerator;
+    source = Quaternion.FromEulerAngles(0, 0, 0);
+    target = Quaternion.FromEulerAngles(0, 0, 0);
+    shadowGenerator: ShadowGenerator;
     //jumping and collision with ground checks
     velocity = new Vector3();
     dashvelv = new Vector3();
@@ -29,18 +29,32 @@ export default class Game {
     dashing = false;
 
     //particle system
-    ps:Nullable<ParticleSystem>;
-    fireball:Mesh;
-    bullet:Mesh = null;
-    fireReady:boolean = false;
+    ps: Nullable<ParticleSystem>;
+    fireball: Mesh;
+    bullet: Mesh;
+    bandit: Mesh;
+    banditClone:boolean = true;
+    fireReady: boolean = false;
     fireStatus = false;
     fireRanger = 20;
     fireVelocity = 0.1;
-    fireDirection:Vector3 =Vector3.Zero();
+    fireDirection: Vector3 = Vector3.Zero();
     distance = 0;
-    fireStart:Vector3 = Vector3.Zero();
-    trace:boolean = true;
-    lightup:boolean = false;
+    fireStart: Vector3 = Vector3.Zero();
+    trace: boolean = true;
+    lightup: boolean = false;
+    banditReady: boolean = false;
+
+    //Animation
+    xSlide: Animation;
+    frameRate = 50;
+
+    //explosion
+    sps: SolidParticleSystem;
+    speed = .5;
+    gravity = -0.05;
+    boom = false;
+
 
     constructor() {
         this.canvas = document.createElement("canvas");
@@ -51,16 +65,18 @@ export default class Game {
         this.engine = new Engine(this.canvas, true);
         this.scene = new Scene(this.engine);
         this.camera = this.createCamera(this.scene);
-       
+
         this.createEnvironment(this.scene);
+        this.xSlide = this.buildAnimation();
         this.engine.runRenderLoop(
             () => {
                 this.scene.render();
             }
         );
-        
+
         this.registerPointerHandler();
         this.scene.onBeforeRenderObservable.add(() => {
+            this._updateSPS();
             this._updateFrame();
             this._checkInput(this.scene);
         });
@@ -71,27 +87,130 @@ export default class Game {
         this._loadParticleSystem(this.scene);
     }
 
-    private  _loadParticleSystem(scene:Scene)
-    {
+    private _updateSPS() {
+        if (this.boom) {
+            if (this.sps) {
+                this.sps.setParticles();
+            }
+
+        }
+    }
+
+    private doExplode(scene: Scene) {
+        this.sps = new SolidParticleSystem("SPS", scene);
+        const tetra = MeshBuilder.CreatePolyhedron("tetra", {size: 0.2,type:2});
+        this.sps.addShape(tetra, 10);
+        tetra.dispose();
+
+        var s = this.sps.buildMesh();
+        s.position = this.bandit.position;
+        this.buildSPS(this.sps,s.position.y);
+
+        this.boom = true;
+        this.bandit.dispose();
+        this.bandit = null;
+        setTimeout(() => {
+            this.boom = false;
+            this.sps.dispose();
+            this.banditClone = true;
+        }, 5000);
+    }
+
+    private buildSPS(sps: SolidParticleSystem,y:number) {
+
+        // recycle particles function
+        //sets particles to an intial state
+        const recycleParticle = (particle) => {
+            particle.position.x = 0;
+            particle.position.y = 0;
+            particle.position.z = 0;
+            particle.rotation.x = Scalar.RandomRange(-Math.PI, Math.PI);
+            particle.rotation.y = Scalar.RandomRange(-Math.PI, Math.PI);
+            particle.rotation.z = Scalar.RandomRange(-Math.PI, Math.PI);
+            particle.color = new Color3(Math.random(), Math.random(), Math.random());
+            particle.velocity.x = Scalar.RandomRange(-0.3 * this.speed, 0.3 * this.speed);
+            particle.velocity.y = Scalar.RandomRange(0.001 * this.speed, this.speed);
+            particle.velocity.z = Scalar.RandomRange(-0.3 * this.speed, 0.3 * this.speed);
+        };
+
+        //Initate by recycling through all particles
+        sps.initParticles = () => {
+            for (let p = 0; p < sps.nbParticles; p++) {
+                recycleParticle(sps.particles[p])
+            }
+        }
+        sps.updateParticle = (particle) => {
+            if (particle.position.y < -y+.5) {
+                // recycleParticle(particle);
+                particle.velocity = Vector3.Zero();
+                return;
+            }
+            particle.velocity.y += this.gravity;                  // apply gravity to y
+            particle.position.addInPlace(particle.velocity); // update particle new position
+
+            const direction = Math.sign(particle.idx % 2 - 0.5); //rotation direction +/- 1 depends on particle index in particles array           // rotation sign and new value
+            particle.rotation.z += 0.01 * direction;
+            particle.rotation.x += 0.005 * direction;
+            particle.rotation.y += 0.008 * direction;
+        }
+
+        sps.initParticles();
+        sps.setParticles();
+    }
+
+    private buildAnimation(): Animation {
+        const xSlide = new Animation("xSlide", "position.x", this.frameRate, Animation.ANIMATIONTYPE_FLOAT, Animation.ANIMATIONLOOPMODE_CYCLE);
+
+        const keyFrames = [];
+
+        keyFrames.push({
+            frame: 0,
+            value: 0
+        });
+
+        keyFrames.push({
+            frame: this.frameRate,
+            value: -3
+        });
+
+        keyFrames.push({
+            frame: 2 * this.frameRate,
+            value: 0
+        });
+        keyFrames.push({
+            frame: 3 * this.frameRate,
+            value: 3
+        });
+        keyFrames.push({
+            frame: 4 * this.frameRate,
+            value: 0
+        });
+
+        xSlide.setKeys(keyFrames);
+
+        return xSlide;
+    }
+
+    private _loadParticleSystem(scene: Scene) {
         var myParticleSystem = null;
         const assetsManager = new AssetsManager(scene);
         // const particleTexture = assetsManager.addTextureTask("my particle texture", "https://models.babylonjs.com/Demos/particles/textures/dotParticle.png")
         const particleFile = assetsManager.addTextFileTask("my particle system", "/particleSystem.json");
-        
+
         // load all tasks
         assetsManager.load();
-    
+
         // after all tasks done, set up particle system
         assetsManager.onFinish = (tasks) => {
             // console.log("tasks successful", tasks);
-    
+
             // prepare to parse particle system files
             const particleJSON = JSON.parse(particleFile.text);
             myParticleSystem = ParticleSystem.Parse(particleJSON, scene, "");
-    
+
             // set particle texture
             // myParticleSystem.particleTexture = particleTexture.texture;
-    
+
             // set emitter
             // myParticleSystem.emitter = sphere;
             myParticleSystem.emitter = this.fireball;
@@ -102,57 +221,52 @@ export default class Game {
 
     }
 
-    private _checkInput(scene:Scene)
-    {
+    private _checkInput(scene: Scene) {
         // dash implementation Blackthornprod unity tutorial
         // not dashing
-        if(this.player)
-        {
+        if (this.player) {
             // console.log("player forward：", this.player.forward);
             let keydown = false;
             let step = Vector3.Zero();
-            if(!this.dashing) {
-                if(this.inputMap["w"] || this.inputMap["ArrowUp"]){
+            if (!this.dashing) {
+                if (this.inputMap["w"] || this.inputMap["ArrowUp"]) {
                     step = this.player.right;
                     step.y = 0;
                     this.player.moveWithCollisions(step.scaleInPlace(0.1));
                     // this.player.position.z+=0.1;
-                    keydown=true;
+                    keydown = true;
                     this.dxn = 1;
-                } 
-                if(this.inputMap["a"] || this.inputMap["ArrowLeft"]){
-                    step  = this.player.forward;
+                }
+                if (this.inputMap["a"] || this.inputMap["ArrowLeft"]) {
+                    step = this.player.forward;
                     step.y = 0;
                     this.player.moveWithCollisions(step.scaleInPlace(0.1));
-                    keydown=true;
+                    keydown = true;
                     this.dxn = 3;
-                } 
-                if(this.inputMap["s"] || this.inputMap["ArrowDown"]){
+                }
+                if (this.inputMap["s"] || this.inputMap["ArrowDown"]) {
                     step = this.player.right;
                     step.y = 0;
                     this.player.moveWithCollisions(step.scaleInPlace(-0.1));
 
-                    keydown=true;
-                } 
-                if(this.inputMap["d"] || this.inputMap["ArrowRight"]){
-                    step  = this.player.forward;
+                    keydown = true;
+                }
+                if (this.inputMap["d"] || this.inputMap["ArrowRight"]) {
+                    step = this.player.forward;
                     step.y = 0;
                     this.player.moveWithCollisions(step.scaleInPlace(-0.1));
-                    keydown=true;
+                    keydown = true;
                     this.dxn = 4;
                 }
-                if(this.inputMap["Shift"] && this.dxn != 0){
-                    keydown=true;
+                if (this.inputMap["Shift"] && this.dxn != 0) {
+                    keydown = true;
                     this.dashing = true;
                 } else {
                     this.dxn = 0;
                 }
-                if(this.inputMap["f"])
-                {
-                    if(this.bullet)
-                    {
-                        if(!this.fireStatus)
-                        {
+                if (this.inputMap["f"]) {
+                    if (this.bullet) {
+                        if (!this.fireStatus) {
                             this.fireStatus = true;
                             this.fireDirection.copyFrom(this.player.right);
                             // this.fireDirection = this.player.right;
@@ -160,30 +274,30 @@ export default class Game {
                             this.distance = 0;
                             this.bullet.setParent(null);
                             this.fireStart.copyFrom(this.bullet.position);
-                            this.bullet.rotate(Vector3.Up(),Math.PI/2);
+                            this.bullet.rotate(Vector3.Up(), Math.PI / 2);
                             // console.log("fireStart:",this.fireStart);
                         }
                     }
                 }
             } else {
-                if(this.dashTime <= 0){
+                if (this.dashTime <= 0) {
                     this.dxn = 0;
                     this.dashTime = this.startDashTime;
                     this.dashing = false;
                     this.dashvelv.y = 0;
                     this.dashvelh.x = 0;
                 } else {
-                    this.dashTime -= scene.getEngine().getDeltaTime()/3000;
-    
-                    if(this.dxn == 1){ // up
+                    this.dashTime -= scene.getEngine().getDeltaTime() / 3000;
+
+                    if (this.dxn == 1) { // up
                         this.dashvelv.y = .5;
                         this.player.moveWithCollisions(this.dashvelv);
-                    } else if(this.dxn == 3){ // left
+                    } else if (this.dxn == 3) { // left
                         this.dashvelh = this.player.forward;
                         this.dashvelh.y += 0;
                         this.player.moveWithCollisions(this.dashvelh.scaleInPlace(0.5));
-                        
-                    } else if(this.dxn == 4){ //right
+
+                    } else if (this.dxn == 4) { //right
                         this.dashvelh = this.player.forward;
                         this.dashvelh.y = 0;
                         this.player.moveWithCollisions(this.dashvelh.scaleInPlace(-0.5));
@@ -193,26 +307,24 @@ export default class Game {
         }
     }
 
-    private registerUpdate(scene:Scene)
-    {
+    private registerUpdate(scene: Scene) {
         scene.registerBeforeRender(() => {
-        
+
             //jump check
             const delta = scene.getEngine().getDeltaTime();
-     
-            if(this.velocity.y<=0){//create a ray to detect the ground as character is falling
-                
+
+            if (this.velocity.y <= 0) {//create a ray to detect the ground as character is falling
+
                 const ray = new Ray();
                 const rayHelper = new RayHelper(ray);
-                if(this.player) rayHelper.attachToMesh(this.player, new Vector3(0, -0.995, 0), new Vector3(0, 0, 0), 0.6);
-    
+                if (this.player) rayHelper.attachToMesh(this.player, new Vector3(0, -0.995, 0), new Vector3(0, 0, 0), 0.6);
+
                 const pick = scene.pickWithRay(ray);
-                if (pick) 
-                {
+                if (pick) {
                     this.onObject = pick.hit;
 
                 }
-                
+
             }
             this.velocity.y -= delta / 3000;
             if (this.onObject) {
@@ -220,115 +332,120 @@ export default class Game {
                 this.velocity.y = Math.max(0, this.velocity.y)
             };
             if (this.jumpKeyDown && this.onObject) {
- 
-                this.velocity.y = 0.20 ;
+
+                this.velocity.y = 0.20;
                 this.onObject = false;
             }
-        
+
             this.player?.moveWithCollisions(this.velocity);
         });
     }
-    private registerAction(scene:Scene)
-    {
+    private registerAction(scene: Scene) {
         scene.actionManager = new ActionManager(scene);
-        scene.actionManager.registerAction(new ExecuteCodeAction(ActionManager.OnKeyDownTrigger,  (evt) => {
+        scene.actionManager.registerAction(new ExecuteCodeAction(ActionManager.OnKeyDownTrigger, (evt) => {
             this.inputMap[evt.sourceEvent.key] = evt.sourceEvent.type == "keydown";
-    
+
             //checking jumps
             if (evt.sourceEvent.type == "keydown" && (evt.sourceEvent.key == "c" || evt.sourceEvent.key == " ")) {
                 this.jumpKeyDown = true;
                 // console.log("jumpKeyDown");
             }
         }));
-        scene.actionManager.registerAction(new ExecuteCodeAction(ActionManager.OnKeyUpTrigger,  (evt) => {
+        scene.actionManager.registerAction(new ExecuteCodeAction(ActionManager.OnKeyUpTrigger, (evt) => {
             this.inputMap[evt.sourceEvent.key] = evt.sourceEvent.type == "keydown";
-    
+
             //checking jumps
             if (evt.sourceEvent.type == "keyup" && (evt.sourceEvent.key == "c" || evt.sourceEvent.key == " ")) {
                 this.jumpKeyDown = false;
-                
+
             }
         }));
-    
+
     }
-    private gameObjects(scene:Scene)
-    {
+    private gameObjects(scene: Scene) {
         this.player = this.asymmetryWithAxis(scene);
-        if(this.player) 
-        {
+        if (this.player) {
             this.player.isPickable = false;
-            this.player.ellipsoid = new Vector3(0.5,0.5,0.5);
+            this.player.ellipsoid = new Vector3(0.5, 0.5, 0.5);
             this.player.position.x = -4;
         }
         this.camera.lockedTarget = this.player;
 
         //single testing platform
         var platform1 = Mesh.CreateBox("plat1", 2, scene);
-        platform1.scaling = new Vector3(1,.25,1);
+        platform1.scaling = new Vector3(1, .25, 1);
         platform1.position.y = 2;
         platform1.position.x = 4;
-        var platmtl = new StandardMaterial("red",scene);
-        platmtl.diffuseColor = new Color3(.5,.5,.8);
+        var platmtl = new StandardMaterial("red", scene);
+        platmtl.diffuseColor = new Color3(.5, .5, .8);
         platform1.material = platmtl;
         platform1.checkCollisions = true;
 
-        this.fireball = MeshBuilder.CreateSphere("ball platform",{diameter:0.5},scene);
+        this.fireball = MeshBuilder.CreateSphere("ball platform", { diameter: 0.5 }, scene);
         this.fireball.material = platmtl;
         this.fireball.position.x = 4;
         this.fireball.position.y = 3;
-        this.fireball.isVisible  = true;
+        this.fireball.isVisible = true;
         this.fireball.checkCollisions = false;
 
         //shadows setting
         platform1.receiveShadows = true;
         this.shadowGenerator.getShadowMap()?.renderList?.push(platform1);
-        if(this.player) this.shadowGenerator.getShadowMap()?.renderList?.push(this.player);
+        if (this.player) this.shadowGenerator.getShadowMap()?.renderList?.push(this.player);
     }
-    private _updateFrame()
-    {
-        if(this.player)
-        {
-            if(this.isPointerDown)
+    private _updateFrame() {
+        if (this.bandit == null && this.banditReady && this.banditClone) {
+            this.bandit = this.fireball.clone();
+            // console.log("cloned a bandit");
+            this.bandit.position = Vector3.Zero();
+            this.bandit.position.z = 10;
+            this.bandit.position.y = 2;
+            this.bandit.isVisible = true;
+            if (this.ps)
             {
+                this.ps.emitter = this.bandit;
+            } 
+            this.bandit.animations.push(this.xSlide);
+            this.banditClone = false;
+            this.scene.beginAnimation(this.bandit, 0, 4 * this.frameRate, true);
+        }
+        if (this.player) {
+            if (this.isPointerDown) {
 
                 this.source = this.player.rotationQuaternion!;
-                if(this.source) 
-                {
-                    this.player.rotationQuaternion = Quaternion.Slerp(this.source,this.target,0.3);
+                if (this.source) {
+                    this.player.rotationQuaternion = Quaternion.Slerp(this.source, this.target, 0.3);
                 }
-                else 
-                {
+                else {
                     console.log("souce is null");
                 }
             }
-            if(this.ps)
-            {
+            if (this.ps) {
                 // this.ps.emitter = new Vector3(this.player.position.x, this.player.position.y+0.5,this.player.position.z);
             }
 
-            if(!this.bullet)
-            {
-                if(this.fireReady)
-                {
+            if (!this.bullet) {
+                if (this.fireReady) {
                     // console.log("clone a new fireball");
                     this.bullet = this.fireball.clone();
-                    if(this.player)
-                    {
+                    if (this.player) {
                         this.bullet.position = Vector3.Zero();
                         this.bullet.position.y = 0.7;
                         this.bullet.isVisible = true;
                         this.bullet.parent = this.player;
                         this.ps?.stop();
+                        if (this.ps) {
+                            this.ps.emitter = null;
+                            this.banditReady = true;
+                        }
                     }
                 }
             }
-            else if(this.fireStatus){
-                let intersect = this.bullet.intersectsMesh(this.fireball);
-                if((this.distance < this.fireRanger)&&(!intersect))
-                {
+            else if (this.fireStatus) {
+                let intersect = this.bullet.intersectsMesh(this.bandit);
+                if ((this.distance < this.fireRanger) && (!intersect)) {
                     // console.log("distance:",this.distance);
-                    if(this.trace)
-                    {
+                    if (this.trace) {
                         const smatrix = Matrix.Zero();
                         const sscaling = Vector3.Zero();
                         const srotationQuaternion = Quaternion.Zero();
@@ -348,15 +465,15 @@ export default class Game {
                         const scaling = Vector3.Zero();
                         const rotationQuaternion = Quaternion.Zero();
                         const translation = Vector3.Zero();
-                        
-                        Matrix.LookAtLHToRef(this.bullet.position, this.fireball.position, Axis.Y, matrix);                      
+
+                        Matrix.LookAtLHToRef(this.bullet.position, this.bandit.position, Axis.Y, matrix);
                         matrix.decompose(scaling, rotationQuaternion, translation);
                         let destQuaternion = rotationQuaternion.invertInPlace();
-                        this.bullet.rotationQuaternion = Quaternion.Slerp(this.bullet.rotationQuaternion,destQuaternion,0.05); 
+                        this.bullet.rotationQuaternion = Quaternion.Slerp(this.bullet.rotationQuaternion, destQuaternion, 0.05);
 
                         this.distance = this.bullet.position.subtract(this.fireStart).length();
                     }
-                    else{
+                    else {
                         let step = this.fireDirection;
                         step.y = 0;
                         step = step.normalize();
@@ -364,51 +481,51 @@ export default class Game {
                         this.distance = this.bullet.position.subtract(this.fireStart).length();
                     }
                 }
-                else{
+                else {
                     // console.log("reset fire bullet");
-                    if(intersect)
-                    {
-                        if(!this.lightup) 
-                        {
+                    if (intersect) {
+                        if (!this.lightup) {
                             this.lightup = true;
                             this.ps?.start();
-                            setTimeout(()=>{
+                            setTimeout(() => {
                                 this.ps?.stop();
+                                if(this.ps) this.ps.emitter = null;
                                 this.lightup = false;
-                            },3000);
+                                this.doExplode(this.scene);
+                            }, 3000);
                         }
 
                     }
                     this.bullet.position = Vector3.Zero();
                     this.bullet.position.y = 0.7;
-                    this.bullet.rotationQuaternion =  Quaternion.FromEulerAngles(0,0,0);
+                    this.bullet.rotationQuaternion = Quaternion.FromEulerAngles(0, 0, 0);
                     this.bullet.parent = this.player;
                     this.distance = 0;
                     this.fireStatus = false;
                 }
-    
+
             }
         }
-        else{
+        else {
             console.log("player is null");
         }
 
 
     }
     private createCamera(scene: Scene) {
-        var camera = new ArcRotateCamera("camera", -Math.PI/2, Math.PI / 2.5, 15, Vector3.Zero(), scene);
+        var camera = new ArcRotateCamera("camera", -Math.PI / 2, Math.PI / 2.5, 15, Vector3.Zero(), scene);
         camera.lowerRadiusLimit = 9;
         camera.upperRadiusLimit = 50;
-        camera.upperBetaLimit = Math.PI/2;
-        camera.lowerBetaLimit = Math.PI/4;
-        camera.attachControl(scene.getEngine().getRenderingCanvas(),true);
+        camera.upperBetaLimit = Math.PI / 2;
+        camera.lowerBetaLimit = Math.PI / 4;
+        camera.attachControl(scene.getEngine().getRenderingCanvas(), true);
         camera._panningMouseButton = 1;
         return camera;
     }
 
     private isPointerDown: boolean = false;
     private registerPointerHandler() {
-  
+
         this.scene.onPointerObservable.add((eventData) => {
             eventData.event.preventDefault();
             if (eventData.type === PointerEventTypes.POINTERDOWN && eventData.event.button === 2) {
@@ -417,9 +534,9 @@ export default class Game {
             }
             else if (eventData.type === PointerEventTypes.POINTERMOVE) {
                 // console.log("event button:",eventData.event.button);
-                if (this.isPointerDown) {         
+                if (this.isPointerDown) {
                     const a1 = this.camera.alpha;
-                    this.target = Quaternion.FromEulerAngles(0,Math.PI - a1,0);
+                    this.target = Quaternion.FromEulerAngles(0, Math.PI - a1, 0);
                     // console.log("mouse key move");
                 }
             }
@@ -439,7 +556,7 @@ export default class Game {
         scene.ambientColor = new Color3(0.3, 0.3, 0.3);
         // This creates a light, aiming 0,1,0 - to the sky (non-mesh)
 
-        var light0 = new DirectionalLight("light", new Vector3(0,-1,0),scene);
+        var light0 = new DirectionalLight("light", new Vector3(0, -1, 0), scene);
         light0.position = new Vector3(20, 40, 20);
         // Default intensity is 1. Let's dim the light a small amount
         light0.intensity = 0.4;
@@ -448,7 +565,7 @@ export default class Game {
 
         //ground
         var ground = CreateGround("ground", { width: 50, height: 50 });
-        ground.receiveShadows = true;  
+        ground.receiveShadows = true;
         var groundMaterial = new StandardMaterial("groundMaterial", scene);
         groundMaterial.diffuseTexture = new Texture("https://assets.babylonjs.com/textures/wood.jpg", scene);
         groundMaterial.diffuseTexture.uScale = 30;
@@ -496,30 +613,28 @@ export default class Game {
         var body = MeshBuilder.CreateCylinder("body", { height: 1, diameterTop: 0.2, diameterBottom: 0.5, tessellation: 6, subdivisions: 1 }, scene);
         var front = MeshBuilder.CreateBox("front", { height: 1, width: 0.3, depth: 0.1875 }, scene);
         front.position.x = 0.125;
-        var head = MeshBuilder.CreateSphere("head",{diameter:0.5},scene);
+        var head = MeshBuilder.CreateSphere("head", { diameter: 0.5 }, scene);
         head.position.y = 0.75;
-        var arm = MeshBuilder.CreateCylinder("arm",{height: 1, diameter: 0.2, tessellation: 6, subdivisions: 1},scene);
-        arm.rotation.x = Math.PI/2;
+        var arm = MeshBuilder.CreateCylinder("arm", { height: 1, diameter: 0.2, tessellation: 6, subdivisions: 1 }, scene);
+        arm.rotation.x = Math.PI / 2;
         arm.position.y = 0.25;
 
-        var pilot = Mesh.MergeMeshes([body,front,head,arm], true);
+        var pilot = Mesh.MergeMeshes([body, front, head, arm], true);
         return pilot;
     }
     //combined an asymmetrical obect with axis
-    private asymmetryWithAxis(scene:Scene):Nullable<Mesh>
-    {
+    private asymmetryWithAxis(scene: Scene): Nullable<Mesh> {
         // var localOrigin = this.localAxes(1);
         // localOrigin.rotation.y = Math.PI/2;
-        var asymmetricalObject = this.asymmetry(scene);     
+        var asymmetricalObject = this.asymmetry(scene);
         // localOrigin.parent = asymmetricalObject;
         var material = new StandardMaterial("m", scene);
         material.diffuseColor = new Color3(1, 0, 5);
-        if(asymmetricalObject)
-        {
+        if (asymmetricalObject) {
             asymmetricalObject.material = material;
             asymmetricalObject.position.y += 0.5;
-            asymmetricalObject.rotationQuaternion = Quaternion.FromEulerAngles(0,-Math.PI/2,0);
-  
+            asymmetricalObject.rotationQuaternion = Quaternion.FromEulerAngles(0, -Math.PI / 2, 0);
+
         }
         return asymmetricalObject;
     }
