@@ -413,7 +413,7 @@ export default class Game {
         var myParticleSystem = null;
         const assetsManager = new AssetsManager(scene);
         // const particleTexture = assetsManager.addTextureTask("my particle texture", "https://models.babylonjs.com/Demos/particles/textures/dotParticle.png")
-        const particleFile = assetsManager.addTextFileTask("my particle system", "/particleSystem.json");
+        const particleFile = assetsManager.addTextFileTask("my particle system", "./particleSystem.json");
 
         // load all tasks
         assetsManager.load();
