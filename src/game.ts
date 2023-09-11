@@ -97,8 +97,8 @@ export default class Game {
     staticMesh;
     currentMesh?: Mesh;
     navmeshParameters = {
-        cs: 0.2,
-        ch: 0.2,
+        cs: 0.5,
+        ch: 0.5,
         walkableSlopeAngle: 90,
         walkableHeight: 1.0,
         walkableClimb: 1,
