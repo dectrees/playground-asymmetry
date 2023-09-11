@@ -1,4 +1,8 @@
-A simple third person 3D game prototype for demostration of some basic game techniques:
+A simple third person 3D game prototype for demostration of some basic game techniques.
+
+play the demo here:
+
+https://dectrees.github.io/playground-asymmetry/
 
 * camera control
 * input control
